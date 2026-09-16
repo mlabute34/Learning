@@ -1,0 +1,1071 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ESP32 firmware with FreeRTOS, from zero</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..800&family=IBM+Plex+Sans:ital,wght@0,400;0,600;1,400&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --paper:#F1F3EF;
+  --surface:#FFFFFF;
+  --ink:#1E252D;
+  --muted:#56606A;
+  --rule:#CBD2CA;
+  --link:#17657F;
+  --signal:#B8870A;
+  --signal-soft:#F7EDCB;
+  --scope-bg:#1C2931;
+  --scope-grid:rgba(160,190,200,.13);
+  --scope-mark:rgba(160,190,200,.35);
+  --trace:#F2C230;
+  --cursor:#5FD0E6;
+  --scope-text:#AFC0C8;
+  --focus:#17657F;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#172027;
+    --surface:#1F2A32;
+    --ink:#E4E9E5;
+    --muted:#9AA6AF;
+    --rule:#33434E;
+    --link:#71C9E0;
+    --signal:#E3B53A;
+    --signal-soft:#2C2A1C;
+    --scope-bg:#10191F;
+    --focus:#71C9E0;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#172027;
+  --surface:#1F2A32;
+  --ink:#E4E9E5;
+  --muted:#9AA6AF;
+  --rule:#33434E;
+  --link:#71C9E0;
+  --signal:#E3B53A;
+  --signal-soft:#2C2A1C;
+  --scope-bg:#10191F;
+  --focus:#71C9E0;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion: reduce){html{scroll-behavior:auto}}
+body{
+  margin:0;
+  background:var(--paper);
+  color:var(--ink);
+  font-family:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  font-size:17px;
+  line-height:1.6;
+}
+img,svg{max-width:100%}
+a{color:var(--link);text-underline-offset:2px}
+a:focus-visible,button:focus-visible,input:focus-visible{outline:2px solid var(--focus);outline-offset:3px}
+code{
+  font-family:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  font-size:.86em;
+  background:color-mix(in srgb,var(--rule) 45%,transparent);
+  padding:.05em .3em;
+  border-radius:3px;
+  overflow-wrap:anywhere;
+}
+.wrap{max-width:1080px;margin:0 auto;padding:0 1.25rem}
+h1,h2,h3,.mod-num,.hours-big{font-family:"Archivo","Arial Narrow",Arial,sans-serif}
+
+/* Hero */
+.hero{padding:3.5rem 0 2.5rem}
+.hero h1{
+  font-stretch:72%;
+  font-weight:760;
+  font-size:clamp(2.3rem,6vw,4.1rem);
+  line-height:1.02;
+  letter-spacing:-.01em;
+  margin:0 0 1rem;
+  max-width:14ch;
+}
+.lede{font-size:1.15rem;color:var(--muted);max-width:60ch;margin:0 0 2rem}
+
+.scope{
+  background:var(--scope-bg);
+  border-radius:12px;
+  padding:1.1rem 1.1rem .9rem;
+  color:var(--scope-text);
+}
+.scope-head{display:flex;justify-content:space-between;align-items:baseline;gap:1rem;flex-wrap:wrap;margin-bottom:.4rem}
+.scope-head p{margin:0;font-size:.9rem}
+.hours-big{font-size:1.6rem;font-weight:700;font-stretch:80%;color:var(--trace)}
+.screen{
+  position:relative;
+  height:150px;
+  background-image:
+    linear-gradient(to right,var(--scope-grid) 1px,transparent 1px),
+    linear-gradient(to bottom,var(--scope-grid) 1px,transparent 1px);
+  background-size:12.5% 25%;
+  border-left:1px solid var(--scope-grid);
+  border-bottom:1px solid var(--scope-grid);
+  margin:1.6rem 0 1.8rem;
+}
+.screen svg{position:absolute;inset:0;width:100%;height:100%;overflow:visible}
+.trace{fill:none;stroke:var(--trace);stroke-width:2.5;filter:drop-shadow(0 0 3px rgba(242,194,48,.55))}
+.mark{stroke:var(--scope-mark);stroke-width:1;stroke-dasharray:3 4}
+.cursor{stroke:var(--cursor);stroke-width:2}
+.mod-labels,.tick-labels{position:absolute;left:0;right:0;height:1.2rem;font-size:.78rem;pointer-events:none}
+.mod-labels{top:-1.45rem}
+.tick-labels{bottom:-1.55rem}
+.mod-labels span,.tick-labels span{position:absolute;transform:translateX(-50%);white-space:nowrap}
+.mod-labels a{pointer-events:auto;color:var(--scope-text);text-decoration:none}
+.mod-labels a:hover{color:var(--trace)}
+.scope-foot{display:flex;flex-wrap:wrap;gap:.6rem 1.5rem;align-items:center;justify-content:space-between;font-size:.92rem}
+.scope-foot a{color:var(--cursor)}
+.legend{margin:0;color:var(--scope-text)}
+button.reset{
+  font:inherit;font-size:.85rem;color:var(--scope-text);background:transparent;
+  border:1px solid var(--scope-mark);border-radius:6px;padding:.25rem .7rem;cursor:pointer;
+}
+button.reset.armed{color:var(--trace);border-color:var(--trace)}
+
+/* Intro */
+.intro{border-top:1px solid var(--rule);padding:2.5rem 0}
+.intro-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:2rem 3rem}
+.intro h2{font-stretch:80%;font-weight:700;font-size:1.5rem;margin:0 0 .6rem;line-height:1.2}
+.intro p{margin:0 0 1rem;max-width:62ch}
+.kit{width:100%;border-collapse:collapse;font-size:.95rem}
+.kit td{padding:.45rem .2rem;border-bottom:1px solid var(--rule);vertical-align:top}
+.kit td:first-child{padding-right:1rem;width:45%}
+.note{background:var(--signal-soft);border-radius:8px;padding:.9rem 1.1rem;font-size:.95rem;margin:1rem 0}
+.note p:last-child{margin-bottom:0}
+.res{list-style:none;padding:0;margin:0}
+.res li{padding:.5rem 0;border-bottom:1px solid var(--rule)}
+.res li span{display:block;color:var(--muted);font-size:.9rem}
+
+/* Modules */
+.module{border-top:2px solid var(--ink);padding:2.5rem 0 1.5rem;display:grid;grid-template-columns:8.5rem minmax(0,1fr);gap:0 2.5rem}
+.mod-side{position:relative}
+.mod-side-inner{position:sticky;top:1.25rem}
+.mod-num{font-size:5rem;font-weight:800;font-stretch:62%;line-height:.85;color:var(--ink)}
+.mod-range{font-size:.9rem;color:var(--muted);margin:.5rem 0 0}
+.mod-prog{font-size:.9rem;color:var(--muted);margin:.15rem 0 0}
+.mod-prog.complete{color:var(--signal);font-weight:600}
+.mod-main{max-width:72ch}
+.mod-main h2{font-stretch:78%;font-weight:720;font-size:clamp(1.7rem,3.4vw,2.3rem);line-height:1.1;margin:0 0 .5rem}
+.goal{font-size:1.08rem;color:var(--muted);margin:0 0 1.5rem}
+
+.session{border-top:1px solid var(--rule);padding:1.4rem 0 1.2rem}
+.session-head{display:flex;justify-content:space-between;align-items:baseline;gap:1rem}
+.session h3{font-stretch:85%;font-weight:650;font-size:1.25rem;margin:0 0 .8rem;line-height:1.25}
+.session h3 .sn{color:var(--muted);font-weight:500;margin-right:.45rem}
+.dur{font-size:.9rem;color:var(--muted);white-space:nowrap}
+.session dl{display:grid;grid-template-columns:5.2rem minmax(0,1fr);gap:.55rem 1rem;margin:0}
+.session dt{font-family:"Archivo",Arial,sans-serif;font-stretch:85%;font-weight:650;color:var(--muted);padding-top:.05rem}
+.session dd{margin:0}
+.session dd p{margin:0 0 .5rem}
+.session dd p:last-child{margin:0}
+.session dd ul,.project ul,.project ol,.checkpoint ul,.outro ul{margin:.2rem 0 0;padding-left:1.2rem}
+.session dd li,.project li,.checkpoint li,.outro li{margin-bottom:.35rem}
+.done-toggle{display:inline-flex;align-items:center;gap:.5rem;margin-top:1rem;font-size:.92rem;cursor:pointer;user-select:none}
+.done-toggle input{width:1.1rem;height:1.1rem;accent-color:var(--signal);margin:0;cursor:pointer}
+.session.is-done h3{color:var(--muted)}
+.session.is-done .done-toggle{color:var(--signal);font-weight:600}
+
+.project{
+  background:var(--surface);
+  border-left:4px solid var(--signal);
+  border-radius:0 8px 8px 0;
+  padding:1rem 1.2rem;
+  margin:.4rem 0 .2rem;
+}
+.project h4{font-family:"Archivo",Arial,sans-serif;font-stretch:85%;font-size:1.1rem;margin:0 0 .4rem}
+.project p{margin:0 0 .5rem}
+.checkpoint{margin:1.2rem 0 0;padding:1rem 0 0;border-top:1px dashed var(--rule)}
+.checkpoint h4{font-family:"Archivo",Arial,sans-serif;font-stretch:85%;font-size:1.05rem;margin:0 0 .3rem}
+
+.outro{border-top:2px solid var(--ink);padding:2.5rem 0 4rem}
+.outro-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:2rem 3rem}
+.outro h2{font-stretch:78%;font-weight:720;font-size:1.8rem;margin:0 0 .6rem;line-height:1.15}
+
+@media (max-width:760px){
+  body{font-size:16px}
+  .intro-grid,.outro-grid{grid-template-columns:1fr}
+  .module{grid-template-columns:1fr}
+  .mod-side-inner{position:static;display:flex;align-items:baseline;gap:1rem;flex-wrap:wrap;margin-bottom:.6rem}
+  .mod-num{font-size:3.2rem}
+  .mod-range,.mod-prog{margin:0}
+  .session dl{grid-template-columns:1fr;gap:.15rem}
+  .session dd{margin-bottom:.6rem}
+  .screen{height:120px}
+}
+</style>
+</head>
+<body>
+
+<header class="hero wrap">
+  <h1>ESP32 firmware with FreeRTOS, from zero</h1>
+  <p class="lede">Forty hours of reading, watching and building, in order. You finish with a Wi-Fi connected stepper controller that homes itself, protects itself from heat and driver faults, and has timing you have proven on a logic analyzer.</p>
+
+  <div class="scope" aria-label="Course progress">
+    <div class="scope-head">
+      <p><span class="hours-big" id="hours-done">0</span> of 40 hours done</p>
+      <p class="legend">Trace goes high for each finished session</p>
+    </div>
+    <div class="screen">
+      <div class="mod-labels" id="mod-labels"></div>
+      <svg id="trace-svg" viewBox="0 0 1000 100" preserveAspectRatio="none" aria-hidden="true">
+        <g id="marks"></g>
+        <line id="cursor" class="cursor" x1="0" x2="0" y1="0" y2="100" vector-effect="non-scaling-stroke"></line>
+        <path id="trace" class="trace" d="" vector-effect="non-scaling-stroke"></path>
+      </svg>
+      <div class="tick-labels" id="tick-labels"></div>
+    </div>
+    <div class="scope-foot">
+      <a id="next-link" href="#s0-1">Next: 0.1 Install the toolchain and flash hello world</a>
+      <button class="reset" id="reset" type="button">Reset progress</button>
+    </div>
+  </div>
+</header>
+
+<section class="intro wrap">
+  <div class="intro-grid">
+    <div>
+      <h2>What competent means here</h2>
+      <p>After these 40 hours you can design, build and debug a multi-task ESP32 application: tasks with deliberate priorities and measured stack sizes, data moving through queues instead of shared globals, interrupts that hand work to tasks, timing you have verified with a logic analyzer, and crashes you can trace to a line of code.</p>
+      <p>That is the level of a solid junior firmware developer. Depth beyond that comes from the next few projects you ship; the last section points at them.</p>
+
+      <h2>How to work through it</h2>
+      <p>Sessions run 1 to 2.5 hours. Do them in order, since later work reuses earlier code: the ring buffer you write in session 1.3 ends up inside the capstone.</p>
+      <p>Finish every project before moving on. A project left at 80% teaches far less than a finished one, because the last 20% is where the bugs live.</p>
+      <p>Keep one git repository with a folder per session, and a lab notebook where you write what you expected and what you measured. Type code out rather than pasting it.</p>
+
+      <div class="note">
+        <p><strong>Versions.</strong> This course targets ESP-IDF v6.1, the current stable release. Version 6 removed several legacy drivers and moved MQTT and cJSON out into the component registry, so many older tutorials no longer compile. Set the docs version selector to your version and chip every time. Warnings are treated as errors by default in v6; fix them rather than switching that off.</p>
+      </div>
+    </div>
+
+    <div>
+      <h2>Kit</h2>
+      <table class="kit">
+        <tr><td>ESP32-WROOM-32E dev board (ESP32S or DevKitC style)</td><td>The classic dual-core ESP32. On Windows you may need the CP210x or CH340 USB driver, depending on the chip beside the USB port.</td></tr>
+        <tr><td>DRV8825 driver carrier and a NEMA 17 bipolar stepper</td><td>Plus a 12 V supply rated above your motor current, and a 100 µF electrolytic capacitor across VMOT and GND, right at the driver.</td></tr>
+        <tr><td>10 kΩ NTC thermistor and a 10 kΩ resistor</td><td>Thermal protection. Note the B value from its listing; 3950 is common.</td></tr>
+        <tr><td>Photoresistor, 10 kΩ resistor and an LED</td><td>The LED shines on the photoresistor and a flag on the motor shaft breaks the beam, which makes a homing sensor.</td></tr>
+        <tr><td>Breadboard, jumpers, 2 buttons, 10 kΩ pot, 2 LEDs with 330 Ω resistors, a few 0.1 µF capacitors</td><td>The capacitors go from each analog input to ground to steady the readings.</td></tr>
+        <tr><td>Multimeter</td><td>Required for setting the driver's current limit.</td></tr>
+        <tr><td>24 MHz 8-channel USB logic analyzer</td><td>Used with PulseView, which is free. The most valuable $15 in the kit.</td></tr>
+      </table>
+
+      <div class="note">
+        <p><strong>Before the motor ever moves.</strong> Set the DRV8825 current limit with a multimeter before connecting the motor. On Pololu's carrier the sense resistors are 0.100 Ω, so the current limit is 2 × VREF; check the resistors on a clone board. In full-step mode the coils get about 70% of that limit. Without a heatsink, stay at or below about 1.5 A. Never connect or disconnect the motor while the driver is powered, and join the ESP32's ground to the driver's ground.</p>
+      </div>
+
+      <h2 style="margin-top:1.6rem">Suggested pin map</h2>
+      <table class="kit">
+        <tr><td>STEP, DIR, ENABLE</td><td>GPIO25, GPIO26, GPIO27. Add a 10 kΩ pull-up from ENABLE to 3.3 V so the driver stays disabled while the ESP32 boots.</td></tr>
+        <tr><td>FAULT</td><td>GPIO33, with the internal pull-up enabled.</td></tr>
+        <tr><td>RESET and SLEEP</td><td>Both to 3.3 V, as in Pololu's minimal wiring diagram. Leave MODE0 to MODE2 unconnected for full step while you learn.</td></tr>
+        <tr><td>Thermistor, photoresistor, pot</td><td>GPIO36, GPIO39, GPIO34. All on ADC1, all input-only.</td></tr>
+        <tr><td>Buttons</td><td>GPIO18 and GPIO19, with internal pull-ups.</td></tr>
+        <tr><td>Status LED</td><td>GPIO23, or the onboard LED, which is usually GPIO2.</td></tr>
+      </table>
+      <p style="font-size:.93rem;color:var(--muted);margin-top:.8rem">The rules behind that map: never use GPIO6 to 11, which connect to the module's flash. Keep GPIO0, 2, 5, 12 and 15 free of anything that pulls them at boot; GPIO12 in particular can stop the board booting. GPIO34 to 39 are input-only with no internal pull-ups. Analog inputs go on ADC1 (GPIO32 to 39), because ADC2 stops working while Wi-Fi is on.</p>
+
+      <h2 style="margin-top:1.6rem">Core resources</h2>
+      <ul class="res">
+        <li><a href="https://github.com/FreeRTOS/FreeRTOS-Kernel-Book" target="_blank" rel="noopener">Mastering the FreeRTOS Real Time Kernel</a><span>Free book by the FreeRTOS team. PDF under the repository's releases.</span></li>
+        <li><a href="https://docs.espressif.com/projects/esp-idf/en/stable/esp32/" target="_blank" rel="noopener">ESP-IDF Programming Guide</a><span>Free. Page names below follow its left-hand navigation.</span></li>
+        <li><a href="https://www.youtube.com/results?search_query=digikey+introduction+to+rtos+shawn+hymel" target="_blank" rel="noopener">Introduction to RTOS, Shawn Hymel for DigiKey</a><span>Twelve free videos of 10 to 20 minutes each, on an ESP32.</span></li>
+        <li><a href="https://cs50.harvard.edu/x/" target="_blank" rel="noopener">CS50x lectures</a> and <a href="https://beej.us/guide/bgc/" target="_blank" rel="noopener">Beej's Guide to C Programming</a><span>Free. Your C foundation.</span></li>
+        <li><a href="https://www.learncpp.com/" target="_blank" rel="noopener">learncpp.com</a><span>Free. Only the lessons listed in Module 3.</span></li>
+        <li><a href="https://sigrok.org/wiki/PulseView" target="_blank" rel="noopener">PulseView</a><span>Free logic analyzer software with protocol decoders.</span></li>
+        <li><a href="https://www.pololu.com/product/2133" target="_blank" rel="noopener">Pololu DRV8825 carrier page</a><span>Wiring diagram, microstep table and current-limit procedure, with a linked video.</span></li>
+      </ul>
+
+      <div class="note">
+        <p><strong>Translating the RTOS videos.</strong> They use the Arduino framework, which runs on top of ESP-IDF, so every FreeRTOS call is identical. Code in <code>setup()</code> goes in <code>app_main()</code>. <code>loop()</code> becomes a task with <code>while (1)</code> and a delay. <code>Serial.println</code> becomes <code>ESP_LOGI</code>, and <code>digitalWrite</code> becomes <code>gpio_set_level</code>. Stack sizes are in bytes in both.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<main class="wrap">
+
+<!-- MODULE 0 -->
+<section class="module" id="m0" data-module="0">
+  <div class="mod-side"><div class="mod-side-inner"><div class="mod-num">0</div><p class="mod-range"></p><p class="mod-prog"></p></div></div>
+  <div class="mod-main">
+    <h2>Setup and first light</h2>
+    <p class="goal">A board on your desk that you can build, flash and monitor from VS Code.</p>
+
+    <article class="session" id="s0-1">
+      <div class="session-head"><h3><span class="sn">0.1</span>Install the toolchain and flash hello world</h3><span class="dur">1 h</span></div>
+      <dl>
+        <dt>Read</dt><dd>ESP-IDF Programming Guide, Get Started, with the version set to v6.1 and the chip set to ESP32. Follow the install path that uses the ESP-IDF Installation Manager (EIM) together with the VS Code extension.</dd>
+        <dt>Do</dt><dd>Install everything. Open the <code>get-started/hello_world</code> example, set the target to esp32, then build, flash and open the monitor (exit with <code>Ctrl+]</code>). If flashing fails to connect, hold the BOOT button as the upload starts; some ESP32S boards need it.</dd>
+        <dt>Done when</dt><dd>The monitor shows the chip information and the restart countdown.</dd>
+      </dl>
+      <label class="done-toggle"><input type="checkbox" data-session="s0-1" data-h="1" data-title="0.1 Install the toolchain and flash hello world"> Session done</label>
+    </article>
+
+    <article class="session" id="s0-2">
+      <div class="session-head"><h3><span class="sn">0.2</span>Blink, menuconfig and what an RTOS is</h3><span class="dur">1 h</span></div>
+      <dl>
+        <dt>Watch</dt><dd>Introduction to RTOS, Part 1: What is a Real-Time Operating System.</dd>
+        <dt>Read</dt><dd>The overview pages at the start of the ESP32 datasheet: cores, memory and the list of peripherals. Nothing more yet.</dd>
+        <dt>Do</dt><dd>
+          <p>Open the <code>get-started/blink</code> example. In menuconfig, set the blink GPIO to your board's onboard LED (usually GPIO2 on ESP32S boards), or wire an LED and a 330 Ω resistor to GPIO23. Then change the pin and the blink period.</p>
+          <p>In <code>idf.py menuconfig</code>, find the FreeRTOS tick rate under Component config, FreeRTOS, Kernel. Note its value and leave it alone. Create your course git repository and commit.</p>
+        </dd>
+      </dl>
+      <label class="done-toggle"><input type="checkbox" data-session="s0-2" data-h="1" data-title="0.2 Blink, menuconfig and what an RTOS is"> Session done</label>
+    </article>
+
+    <div class="checkpoint">
+      <h4>You're ready for Module 1 when you can</h4>
+      <ul><li>Say what build, flash and monitor each do.</li><li>Find a setting in menuconfig and explain where that configuration ends up in your project.</li></ul>
+    </div>
+  </div>
+</section>
+
+<!-- MODULE 1 -->
+<section class="module" id="m1" data-module="1">
+  <div class="mod-side"><div class="mod-side-inner"><div class="mod-num">1</div><p class="mod-range"></p><p class="mod-prog"></p></div></div>
+  <div class="mod-main">
+    <h2>C from zero</h2>
+    <p class="goal">Write and reason about C, including pointers and the language features firmware leans on hardest. Do this module on your computer, using <a href="https://www.onlinegdb.com/" target="_blank" rel="noopener">OnlineGDB</a> in the browser or gcc if you have it, because the feedback loop is much faster than flashing a board.</p>
+
+    <article class="session" id="s1-1">
+      <div class="session-head"><h3><span class="sn">1.1</span>Variables, control flow and functions</h3><span class="dur">2.5 h</span></div>
+      <dl>
+        <dt>Watch</dt><dd>CS50x Lecture 1 (C), at 1.5× speed.</dd>
+        <dt>Read</dt><dd>Beej's Guide to C: Hello, World; Variables and Statements; Functions.</dd>
+        <dt>Do</dt><dd>
+          <p>Write three programs:</p>
+          <ul>
+            <li>A Celsius to Fahrenheit table from −40 to 100 in steps of 10.</li>
+            <li>FizzBuzz from 1 to 100.</li>
+            <li>A function <code>bool is_prime(int n)</code> with a test loop in <code>main</code>.</li>
+          </ul>
+          <p>Compile with <code>-Wall -Wextra</code> and fix every warning.</p>
+        </dd>
+      </dl>
+      <label class="done-toggle"><input type="checkbox" data-session="s1-1" data-h="2.5" data-title="1.1 Variables, control flow and functions"> Session done</label>
+    </article>
+
+    <article class="session" id="s1-2">
+      <div class="session-head"><h3><span class="sn">1.2</span>Arrays, strings and structs</h3><span class="dur">1.5 h</span></div>
+      <dl>
+        <dt>Read</dt><dd>Beej: Arrays; Strings; Structs; typedef; Enumerated Types.</dd>
+        <dt>Do</dt><dd>
+          <p>Define <code>typedef struct { uint32_t timestamp_ms; float value; uint8_t sensor_id; } reading_t;</code>, including <code>&lt;stdint.h&gt;</code> for the fixed-width type (explained in 1.4). Then:</p>
+          <ul>
+            <li>Fill an array of 10 readings with made-up data.</li>
+            <li>Write functions that take the array and its length and return the min, max and average.</li>
+            <li>Write a function that formats one reading into a <code>char</code> buffer with <code>snprintf</code> and can never overflow it.</li>
+          </ul>
+        </dd>
+      </dl>
+      <label class="done-toggle"><input type="checkbox" data-session="s1-2" data-h="1.5" data-title="1.2 Arrays, strings and structs"> Session done</label>
+    </article>
+
+    <article class="session" id="s1-3">
+      <div class="session-head"><h3><span class="sn">1.3</span>Pointers and memory</h3><span class="dur">2.5 h</span></div>
+      <dl>
+        <dt>Watch</dt><dd>CS50x Lecture 4 (Memory), at 1.5× speed.</dd>
+        <dt>Read</dt><dd>Beej: Pointers; Pointers II: Arithmetic; Manual Memory Allocation.</dd>
+        <dt>Do</dt><dd>
+          <p>Build a fixed-size ring buffer of <code>reading_t</code>: a struct holding an array of 16, a head, a tail and a count, with <code>rb_init</code>, <code>rb_push</code>, <code>rb_pop</code>, <code>rb_is_full</code> and <code>rb_is_empty</code>, each taking a pointer to the struct.</p>
+          <p>Decide what pushing into a full buffer does, rejecting the new item or overwriting the oldest, and write the choice in a comment. Test the behavior with <code>assert</code> in <code>main</code>. You will reuse this code in the capstone.</p>
+        </dd>
+      </dl>
+      <label class="done-toggle"><input type="checkbox" data-session="s1-3" data-h="2.5" data-title="1.3 Pointers and memory"> Session done</label>
+    </article>
+
+    <article class="session" id="s1-4">
+      <div class="session-head"><h3><span class="sn">1.4</span>The embedded parts of C</h3><span class="dur">2 h</span></div>
+      <dl>
+        <dt>Read</dt><dd>
+          <p>Beej: Types IV (qualifiers and specifiers, which covers <code>const</code>, <code>static</code>, <code>volatile</code> and <code>extern</code>); Multifile Projects; The C Preprocessor; Bitwise Operations; Pointers III (function pointers).</p>
+          <p>Skim the Barr Group Embedded C Coding Standard (free), focusing on its rules for data types and variables.</p>
+        </dd>
+        <dt>Do</dt><dd>
+          <ul>
+            <li>Split the ring buffer into <code>ringbuf.h</code> and <code>ringbuf.c</code> with include guards.</li>
+            <li>Write set, clear, toggle and test operations for bits in a <code>uint32_t</code> "register", and print it in binary after each one.</li>
+            <li>Build a dispatch table: an <code>enum</code> of events and an array of function pointers holding one handler per event.</li>
+          </ul>
+        </dd>
+      </dl>
+      <label class="done-toggle"><input type="checkbox" data-session="s1-4" data-h="2" data-title="1.4 The embedded parts of C"> Session done</label>
+    </article>
+
+    <div class="checkpoint">
+      <h4>You're ready for Module 2 when you can</h4>
+      <ul>
+        <li>Write the ring buffer from a blank file in about 20 minutes.</li>
+        <li>Explain both meanings of <code>static</code>, and why <code>volatile</code> exists.</li>
+        <li>Say what happens to a struct passed by value versus by pointer.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- MODULE 2 -->
+<section class="module" id="m2" data-module="2">
+  <div class="mod-side"><div class="mod-side-inner"><div class="mod-num">2</div><p class="mod-range"></p><p class="mod-prog"></p></div></div>
+  <div class="mod-main">
+    <h2>C on the ESP32</h2>
+    <p class="goal">Drive real peripherals through ESP-IDF, and measure what your code actually does instead of trusting it.</p>
+
+    <article class="session" id="s2-1">
+      <div class="session-head"><h3><span class="sn">2.1</span>Project structure, GPIO and logging</h3><span class="dur">1.5 h</span></div>
+      <dl>
+        <dt>Read</dt><dd>API Guides: Build System (the overview and component CMakeLists parts only) and Error Handling. API Reference: Peripherals, GPIO; System, Logging.</dd>
+        <dt>Do</dt><dd>Start from an empty project made with <code>idf.py create-project</code>, not from an example. Drive three LEDs in a chase pattern, read a button with the internal pull-up enabled, and log each press with <code>ESP_LOGI</code>. Check the <code>esp_err_t</code> returned by every call.</dd>
+      </dl>
+      <label class="done-toggle"><input type="checkbox" data-session="s2-1" data-h="1.5" data-title="2.1 Project structure, GPIO and logging"> Session done</label>
+    </article>
+
+    <article class="session" id="s2-2">
+      <div class="session-head"><h3><span class="sn">2.2</span>First steps: the DRV8825 on a logic analyzer</h3><span class="dur">1.5 h</span></div>
+      <dl>
+        <dt>Watch</dt><dd>Pololu's video on setting the current limit on their stepper motor driver carriers, linked from the carrier page.</dd>
+        <dt>Read</dt><dd>The DRV8825 carrier page: wiring, microstep table and current limit. The PulseView getting-started pages on the sigrok wiki.</dd>
+        <dt>Do</dt><dd>
+          <ul>
+            <li>Wire the driver from the pin map and set the current limit. Only then connect the motor, with the supply off.</li>
+            <li>Step at 200 steps per second using <code>gpio_set_level</code> and <code>esp_rom_delay_us</code> busy-waits. Capture STEP and DIR, and confirm each high and low phase of STEP lasts at least 1.9 µs, the DRV8825 minimum.</li>
+            <li>Replace the wait between steps with <code>vTaskDelay(1)</code> and measure again. The rate drops to 100 steps per second, because the default tick is 10 ms. Try <code>pdMS_TO_TICKS(15)</code> and explain why it is no slower.</li>
+          </ul>
+          <p>A loop that busy-waits nonstop will trip the task watchdog. That is Module 7 arriving early; for now, yield with <code>vTaskDelay(1)</code> every 100 ms.</p>
+        </dd>
+      </dl>
+      <label class="done-toggle"><input type="checkbox" data-session="s2-2" data-h="1.5" data-title="2.2 First steps: the DRV8825 on a logic analyzer"> Session done</label>
+    </article>
+
+    <article class="session" id="s2-3">
+      <div class="session-head"><h3><span class="sn">2.3</span>ADC, PWM and Project 1</h3><span class="dur">1 h</span></div>
+      <dl>
+        <dt>Read</dt><dd>API Reference, Peripherals: ADC Oneshot Mode, including the calibration section (the classic ESP32 uses the line fitting scheme); LED Control (LEDC).</dd>
+        <dt>Do</dt><dd>
+          <p>Read the pot, thermistor and photoresistor on ADC1 with 12 dB attenuation, and log calibrated millivolts rather than raw counts.</p>
+          <div class="project">
+            <h4>Project 1: Jog controller</h4>
+            <p>A single loop in <code>app_main</code>, with no tasks created.</p>
+            <ul>
+              <li>The pot sets speed and direction. Centre is stop, and turning further either way runs faster in that direction.</li>
+              <li>A button toggles the driver's ENABLE line, and LED brightness shows speed through LEDC PWM.</li>
+              <li>Log the thermistor and photoresistor millivolts once a second.</li>
+            </ul>
+            <p>Watch the motor whenever the loop reads or logs: it stutters. That stutter is the reason the rest of this course exists. Keep this code, because you will rebuild it three times.</p>
+          </div>
+        </dd>
+      </dl>
+      <label class="done-toggle"><input type="checkbox" data-session="s2-3" data-h="1" data-title="2.3 ADC, PWM and Project 1"> Session done</label>
+    </article>
+
+    <div class="checkpoint">
+      <h4>You're ready for Module 3 when you can</h4>
+      <ul>
+        <li>Read a board pinout and choose safe pins.</li>
+        <li>Measure a signal's period on the analyzer and explain why it has that value.</li>
+        <li>Explain why a tick-based delay caps your step rate.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- MODULE 3 -->
+<section class="module" id="m3" data-module="3">
+  <div class="mod-side"><div class="mod-side-inner"><div class="mod-num">3</div><p class="mod-range"></p><p class="mod-prog"></p></div></div>
+  <div class="mod-main">
+    <h2>C++ for firmware</h2>
+    <p class="goal">Use the parts of C++ that make firmware safer, and skip the parts that don't belong on a microcontroller.</p>
+
+    <article class="session" id="s3-1">
+      <div class="session-head"><h3><span class="sn">3.1</span>Classes, references and templates</h3><span class="dur">1 h</span></div>
+      <dl>
+        <dt>Read</dt><dd>learncpp.com lessons on references, classes and member functions, constructors and destructors, const member functions, <code>enum class</code>, and an introduction to class templates. Find each through the site's index. Skip streams, exceptions and inheritance for now.</dd>
+        <dt>Do</dt><dd>Port the ring buffer to <code>template&lt;typename T, std::size_t N&gt; class RingBuffer</code> backed by <code>std::array&lt;T, N&gt;</code>. Keep the same tests, compiled on your computer with g++.</dd>
+      </dl>
+      <label class="done-toggle"><input type="checkbox" data-session="s3-1" data-h="1" data-title="3.1 Classes, references and templates"> Session done</label>
+    </article>
+
+    <article class="session" id="s3-2">
+      <div class="session-head"><h3><span class="sn">3.2</span>C++ inside ESP-IDF</h3><span class="dur">1 h</span></div>
+      <dl>
+        <dt>Read</dt><dd>API Guides: C++ Support. Note that exceptions and RTTI are off by default.</dd>
+        <dt>Do</dt><dd>
+          <ul>
+            <li>Convert Project 1 to <code>main.cpp</code> with <code>extern "C" void app_main(void)</code>.</li>
+            <li>Wrap the DRV8825's STEP, DIR and ENABLE pins in a <code>StepperDriver</code> class that configures them in its constructor.</li>
+            <li>Write a <code>ScopedLock</code> class that takes a <code>SemaphoreHandle_t</code> in its constructor and gives it back in its destructor. You'll use it in Module 5.</li>
+          </ul>
+          <p>House rules from here on: no exceptions, no <code>new</code> or <code>delete</code> after startup, <code>std::array</code> over <code>std::vector</code>, and <code>constexpr</code> for pin numbers and timing constants.</p>
+        </dd>
+      </dl>
+      <label class="done-toggle"><input type="checkbox" data-session="s3-2" data-h="1" data-title="3.2 C++ inside ESP-IDF"> Session done</label>
+    </article>
+
+    <div class="checkpoint">
+      <h4>You're ready for Module 4 when you can</h4>
+      <ul>
+        <li>Explain RAII and why it prevents forgotten unlocks.</li>
+        <li>Say why <code>app_main</code> needs <code>extern "C"</code>.</li>
+        <li>Explain why allocating memory at runtime is risky on a device that runs for months.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- MODULE 4 -->
+<section class="module" id="m4" data-module="4">
+  <div class="mod-side"><div class="mod-side-inner"><div class="mod-num">4</div><p class="mod-range"></p><p class="mod-prog"></p></div></div>
+  <div class="mod-main">
+    <h2>Tasks and the scheduler</h2>
+    <p class="goal">Create tasks on purpose, with the right priority, stack and delay, and prove their timing.</p>
+
+    <article class="session" id="s4-1">
+      <div class="session-head"><h3><span class="sn">4.1</span>Tasks and priorities</h3><span class="dur">1.5 h</span></div>
+      <dl>
+        <dt>Watch</dt><dd>Introduction to RTOS, Part 2 (Getting Started with FreeRTOS) and Part 3 (Task Scheduling).</dd>
+        <dt>Read</dt><dd>FreeRTOS book: Task Management, up to and including the idle task. Then the ESP-IDF API Reference page FreeRTOS (IDF): its overview and the differences from vanilla FreeRTOS.</dd>
+        <dt>Do</dt><dd>
+          <ul>
+            <li>Create two LED tasks at the same priority with different blink rates, plus a third task that logs a heartbeat. Stack sizes are in bytes.</li>
+            <li>Raise one LED task's priority. Predict whether anything visible changes, then check.</li>
+          </ul>
+          <p>Nothing should change, because both tasks spend nearly all their time blocked. Make sure you can explain why.</p>
+        </dd>
+      </dl>
+      <label class="done-toggle"><input type="checkbox" data-session="s4-1" data-h="1.5" data-title="4.1 Tasks and priorities"> Session done</label>
+    </article>
+
+    <article class="session" id="s4-2">
+      <div class="session-head"><h3><span class="sn">4.2</span>Delays that don't drift</h3><span class="dur">1 h</span></div>
+      <dl>
+        <dt>Read</dt><dd>FreeRTOS book: the Blocked state, <code>vTaskDelay</code> and the delay-until sections of Task Management. In current code use <code>xTaskDelayUntil</code>, which also reports whether you missed the deadline.</dd>
+        <dt>Do</dt><dd>
+          <p>Write a task that toggles a pin every 50 ms, but does 0 to 20 ms of random busy work each cycle using <code>esp_random</code> and <code>esp_rom_delay_us</code>. Capture 10 seconds on the analyzer.</p>
+          <p>With <code>vTaskDelay</code> the period wanders. Switch to <code>xTaskDelayUntil</code> and it locks to 50 ms. Record both measurements in your notebook.</p>
+        </dd>
+      </dl>
+      <label class="done-toggle"><input type="checkbox" data-session="s4-2" data-h="1" data-title="4.2 Delays that don't drift"> Session done</label>
+    </article>
+
+    <article class="session" id="s4-3">
+      <div class="session-head"><h3><span class="sn">4.3</span>Stacks, starvation and visibility</h3><span class="dur">1.5 h</span></div>
+      <dl>
+        <dt>Watch</dt><dd>Introduction to RTOS, Part 4 (Memory Management).</dd>
+        <dt>Read</dt><dd>Skim the FreeRTOS book's Heap Memory Management chapter for concepts only, since ESP-IDF uses its own heap implementation. In the ESP-IDF FreeRTOS docs, find <code>vTaskList</code> and <code>vTaskGetRunTimeStats</code> and the menuconfig options they need.</dd>
+        <dt>Do</dt><dd>
+          <ul>
+            <li>Log <code>uxTaskGetStackHighWaterMark</code> for each task. Confirm stack overflow checking is enabled in menuconfig.</li>
+            <li>Shrink one task's stack until it crashes, and read the panic output. Then set a sensible size: the measured high-water mark plus a margin.</li>
+            <li>Add a high-priority task that busy-loops and never blocks. Watch lower-priority LEDs freeze on the analyzer and the task watchdog complain.</li>
+            <li>Print the task list and run-time stats before and after, then fix the task by making it block.</li>
+          </ul>
+        </dd>
+      </dl>
+      <label class="done-toggle"><input type="checkbox" data-session="s4-3" data-h="1.5" data-title="4.3 Stacks, starvation and visibility"> Session done</label>
+    </article>
+
+    <article class="session" id="s4-4">
+      <div class="session-head"><h3><span class="sn">4.4</span>Project 2</h3><span class="dur">1 h</span></div>
+      <dl>
+        <dt>Do</dt><dd>
+          <div class="project">
+            <h4>Project 2: Dimmer as tasks</h4>
+            <p>Rebuild Project 1 as three tasks: a step task that pulses STEP between <code>vTaskDelay</code> calls, an ADC task for the pot and sensors, and a button task. They share speed and enable state through plain global variables. This is deliberately unsafe, and Module 5 fixes it.</p>
+            <p>Then raise the FreeRTOS tick rate to 1000 Hz in menuconfig and measure the new top step rate.</p>
+            <p>Before writing code, draw the task diagram: each task with its priority, period and stack size. Commit the drawing alongside the code.</p>
+          </div>
+        </dd>
+      </dl>
+      <label class="done-toggle"><input type="checkbox" data-session="s4-4" data-h="1" data-title="4.4 Project 2"> Session done</label>
+    </article>
+
+    <div class="checkpoint">
+      <h4>You're ready for Module 5 when you can</h4>
+      <ul>
+        <li>Draw the task state diagram from memory.</li>
+        <li>Explain why a task that never blocks starves every task below it.</li>
+        <li>Pick a stack size from measurements rather than guesses.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- MODULE 5 -->
+<section class="module" id="m5" data-module="5">
+  <div class="mod-side"><div class="mod-side-inner"><div class="mod-num">5</div><p class="mod-range"></p><p class="mod-prog"></p></div></div>
+  <div class="mod-main">
+    <h2>Moving data between tasks safely</h2>
+    <p class="goal">Replace shared globals with queues, mutexes and semaphores, and recognize races, deadlocks and priority inversion when you meet them.</p>
+
+    <article class="session" id="s5-1">
+      <div class="session-head"><h3><span class="sn">5.1</span>Queues</h3><span class="dur">1 h</span></div>
+      <dl>
+        <dt>Watch</dt><dd>Introduction to RTOS, Part 5 (Queue).</dd>
+        <dt>Read</dt><dd>FreeRTOS book: Queue Management.</dd>
+        <dt>Do</dt><dd>
+          <p>An ADC task sends a thermistor <code>reading_t</code> into a queue every 100 ms, and a display task receives and logs it. Then slow the receiver to 500 ms and try both sending behaviors:</p>
+          <ul>
+            <li>A timeout of 0, counting dropped readings.</li>
+            <li><code>portMAX_DELAY</code>, watching the sender block.</li>
+          </ul>
+          <p>Decide which one your design wants, and write down why.</p>
+        </dd>
+      </dl>
+      <label class="done-toggle"><input type="checkbox" data-session="s5-1" data-h="1" data-title="5.1 Queues"> Session done</label>
+    </article>
+
+    <article class="session" id="s5-2">
+      <div class="session-head"><h3><span class="sn">5.2</span>Race conditions and mutexes</h3><span class="dur">1.5 h</span></div>
+      <dl>
+        <dt>Watch</dt><dd>Introduction to RTOS, Part 6 (Mutex).</dd>
+        <dt>Read</dt><dd>FreeRTOS book: Resource Management, covering critical sections, mutexes and gatekeeper tasks. The ESP-IDF FreeRTOS (IDF) page's section on critical sections and spinlocks.</dd>
+        <dt>Do</dt><dd>
+          <ul>
+            <li>Pin two tasks to different cores. Each increments a shared counter 1,000,000 times. Print the total and watch it come up short.</li>
+            <li>Fix it with a mutex using your <code>ScopedLock</code>.</li>
+            <li>Fix it again with <code>portENTER_CRITICAL</code> and a <code>portMUX_TYPE</code> spinlock.</li>
+            <li>Time both fixes with <code>esp_timer_get_time</code> and explain the difference.</li>
+          </ul>
+          <p>This is exactly the bug a step position counter shared between two tasks would have.</p>
+        </dd>
+      </dl>
+      <label class="done-toggle"><input type="checkbox" data-session="s5-2" data-h="1.5" data-title="5.2 Race conditions and mutexes"> Session done</label>
+    </article>
+
+    <article class="session" id="s5-3">
+      <div class="session-head"><h3><span class="sn">5.3</span>Semaphores, deadlock and priority inversion</h3><span class="dur">1.5 h</span></div>
+      <dl>
+        <dt>Watch</dt><dd>Introduction to RTOS, Part 7 (Semaphore), Part 10 (Deadlock and Starvation) and Part 11 (Priority Inversion).</dd>
+        <dt>Read</dt><dd>FreeRTOS book: the sections on binary and counting semaphores, and on priority inheritance.</dd>
+        <dt>Do</dt><dd>
+          <ul>
+            <li>Make two tasks take two mutexes in opposite order until they deadlock. Confirm with the task list that both sit Blocked, then fix it with a fixed lock order.</li>
+            <li>Set up low, medium and high priority tasks where low and high share a resource guarded by a binary semaphore. Capture the high task's wait on the analyzer.</li>
+            <li>Swap the binary semaphore for a mutex and measure how priority inheritance shortens that wait.</li>
+          </ul>
+        </dd>
+      </dl>
+      <label class="done-toggle"><input type="checkbox" data-session="s5-3" data-h="1.5" data-title="5.3 Semaphores, deadlock and priority inversion"> Session done</label>
+    </article>
+
+    <article class="session" id="s5-4">
+      <div class="session-head"><h3><span class="sn">5.4</span>Project 3</h3><span class="dur">1 h</span></div>
+      <dl>
+        <dt>Do</dt><dd>
+          <div class="project">
+            <h4>Project 3: Dimmer, done properly</h4>
+            <p>Remove every shared global from Project 2.</p>
+            <ul>
+              <li>Readings flow through a queue.</li>
+              <li>Speed and enable commands reach the step task through a queue.</li>
+              <li>All logging goes through one gatekeeper task that owns the console.</li>
+            </ul>
+            <p>Update your task diagram with an arrow for every queue and mutex.</p>
+          </div>
+        </dd>
+      </dl>
+      <label class="done-toggle"><input type="checkbox" data-session="s5-4" data-h="1" data-title="5.4 Project 3"> Session done</label>
+    </article>
+
+    <div class="checkpoint">
+      <h4>You're ready for Module 6 when you can</h4>
+      <ul>
+        <li>Say when to use a queue, a mutex, a binary semaphore and a counting semaphore.</li>
+        <li>Spot a race condition by reading code.</li>
+        <li>Explain priority inheritance and what it does not solve.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- MODULE 6 -->
+<section class="module" id="m6" data-module="6">
+  <div class="mod-side"><div class="mod-side-inner"><div class="mod-num">6</div><p class="mod-range"></p><p class="mod-prog"></p></div></div>
+  <div class="mod-main">
+    <h2>Interrupts, notifications and timers</h2>
+    <p class="goal">React to the outside world without polling: short interrupts that hand work to tasks, and timers that run exactly when they should.</p>
+
+    <article class="session" id="s6-1">
+      <div class="session-head"><h3><span class="sn">6.1</span>Hardware interrupts done right</h3><span class="dur">1.5 h</span></div>
+      <dl>
+        <dt>Watch</dt><dd>Introduction to RTOS, Part 9 (Hardware Interrupts).</dd>
+        <dt>Read</dt><dd>FreeRTOS book: Interrupt Management, especially deferred interrupt processing and the FromISR functions. ESP-IDF GPIO docs on <code>gpio_install_isr_service</code> and <code>gpio_isr_handler_add</code>.</dd>
+        <dt>Do</dt><dd>
+          <p>Write a button ISR marked <code>IRAM_ATTR</code> that does only two things: call <code>xTaskNotifyGiveFromISR</code> for a handler task, then <code>portYIELD_FROM_ISR</code>. The handler task counts presses.</p>
+          <p>Capture the button on the analyzer and look at the contact bounce. Debounce in the task by ignoring edges within 30 ms of the last accepted one.</p>
+        </dd>
+      </dl>
+      <label class="done-toggle"><input type="checkbox" data-session="s6-1" data-h="1.5" data-title="6.1 Hardware interrupts done right"> Session done</label>
+    </article>
+
+    <article class="session" id="s6-2">
+      <div class="session-head"><h3><span class="sn">6.2</span>Notifications and event groups</h3><span class="dur">1 h</span></div>
+      <dl>
+        <dt>Read</dt><dd>FreeRTOS book: Task Notifications; Event Groups.</dd>
+        <dt>Do</dt><dd>
+          <ul>
+            <li>One task waits on an event group for both a HOMED and a TEMP_OK bit, while two other tasks set them after random delays.</li>
+            <li>Change it to wait for either bit, and observe the difference.</li>
+            <li>In Project 3, replace a queue that only signals "something happened" with a direct task notification.</li>
+          </ul>
+        </dd>
+      </dl>
+      <label class="done-toggle"><input type="checkbox" data-session="s6-2" data-h="1" data-title="6.2 Notifications and event groups"> Session done</label>
+    </article>
+
+    <article class="session" id="s6-3">
+      <div class="session-head"><h3><span class="sn">6.3</span>Software timers, esp_timer and GPTimer</h3><span class="dur">1 h</span></div>
+      <dl>
+        <dt>Watch</dt><dd>Introduction to RTOS, Part 8 (Software Timers).</dd>
+        <dt>Read</dt><dd>FreeRTOS book: Software Timer Management. ESP-IDF API Reference: ESP Timer, whose callbacks run in a shared task, so keep them short and never block; and General Purpose Timer (GPTimer), whose alarm callbacks run in interrupt context.</dd>
+        <dt>Do</dt><dd>
+          <ul>
+            <li>Use a FreeRTOS software timer to disable the driver 5 seconds after the motor stops, so it doesn't sit holding current and heating up. Reset the timer whenever motion ends.</li>
+            <li>Generate STEP from a GPTimer alarm callback at 1,000 steps per second, toggling the pin on each alarm. Change speed by updating the alarm period, and measure jitter on the analyzer.</li>
+            <li>Generate the same pulses with a periodic <code>esp_timer</code> and compare the jitter.</li>
+          </ul>
+        </dd>
+      </dl>
+      <label class="done-toggle"><input type="checkbox" data-session="s6-3" data-h="1" data-title="6.3 Software timers, esp_timer and GPTimer"> Session done</label>
+    </article>
+
+    <article class="session" id="s6-4">
+      <div class="session-head"><h3><span class="sn">6.4</span>Project 4</h3><span class="dur">1 h</span></div>
+      <dl>
+        <dt>Do</dt><dd>
+          <div class="project">
+            <h4>Project 4: Interrupt-driven jog controller</h4>
+            <ul>
+              <li>STEP pulses come from the GPTimer callback, and speed changes update its alarm period.</li>
+              <li>The button works through an ISR and a notification, with debouncing.</li>
+              <li>The DRV8825 FAULT line triggers an interrupt that sets ENABLE high at once and notifies a task.</li>
+              <li>A software timer disables the driver after 5 idle seconds.</li>
+              <li>The pot and sensors are sampled at a fixed 20 Hz with <code>xTaskDelayUntil</code>. No task polls anything.</li>
+            </ul>
+            <p>Verify on the analyzer that STEP timing holds while you mash the button.</p>
+          </div>
+        </dd>
+      </dl>
+      <label class="done-toggle"><input type="checkbox" data-session="s6-4" data-h="1" data-title="6.4 Project 4"> Session done</label>
+    </article>
+
+    <div class="checkpoint">
+      <h4>You're ready for Module 7 when you can</h4>
+      <ul>
+        <li>Say what may and may not happen inside an ISR, and why.</li>
+        <li>Choose between a notification, a queue and an event group for a given signal.</li>
+        <li>Say when to reach for a FreeRTOS software timer, <code>esp_timer</code> or GPTimer.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- MODULE 7 -->
+<section class="module" id="m7" data-module="7">
+  <div class="mod-side"><div class="mod-side-inner"><div class="mod-num">7</div><p class="mod-range"></p><p class="mod-prog"></p></div></div>
+  <div class="mod-main">
+    <h2>The ESP32 specifics</h2>
+    <p class="goal">Two cores, a real sensor, Wi-Fi, and the skill of diagnosing crashes.</p>
+
+    <article class="session" id="s7-1">
+      <div class="session-head"><h3><span class="sn">7.1</span>Two cores</h3><span class="dur">0.5 h</span></div>
+      <dl>
+        <dt>Watch</dt><dd>Introduction to RTOS, Part 12 (Multicore Systems).</dd>
+        <dt>Read</dt><dd>ESP-IDF FreeRTOS (IDF): symmetric multiprocessing, core affinity, and the note on floating point, which pins a task to the core it was running on.</dd>
+        <dt>Do</dt><dd>Run a CPU-heavy prime search as a task, first unpinned and then pinned to each core using <code>xTaskCreatePinnedToCore</code>. Log <code>xPortGetCoreID()</code>, compare per-core run-time stats, and check whether Project 4's STEP timing or 20 Hz sampling notices.</dd>
+      </dl>
+      <label class="done-toggle"><input type="checkbox" data-session="s7-1" data-h="0.5" data-title="7.1 Two cores"> Session done</label>
+    </article>
+
+    <article class="session" id="s7-2">
+      <div class="session-head"><h3><span class="sn">7.2</span>Analog sensing you can trust</h3><span class="dur">1.5 h</span></div>
+      <dl>
+        <dt>Read</dt><dd>The ADC Oneshot Mode page again, focusing on calibration and noise. Your thermistor's listing for its resistance at 25 °C and its B value, and the Beta equation: 1/T = 1/T₀ + ln(R/R₀)/B, with temperatures in kelvin.</dd>
+        <dt>Do</dt><dd>
+          <ul>
+            <li>Design the thermistor divider so its voltage stays inside the calibrated ADC range (roughly 150 to 2450 mV at 12 dB on the classic ESP32) across the temperatures you care about. Put the math in your notebook.</li>
+            <li>Build a <code>Thermistor</code> class that turns calibrated millivolts into resistance, then °C, averaged through your <code>RingBuffer</code>. Check it against a known reference, such as room temperature on a thermometer or ice water with the thermistor sealed in a bag.</li>
+            <li>Measure the photoresistor's response time in both directions by logging <code>esp_timer_get_time</code> as you block and unblock the beam. The slower direction limits how fast you can home.</li>
+            <li>Turn the photoresistor into a clean beam-blocked signal with two thresholds, so noise near a single threshold can't make it chatter.</li>
+          </ul>
+        </dd>
+      </dl>
+      <label class="done-toggle"><input type="checkbox" data-session="s7-2" data-h="1.5" data-title="7.2 Analog sensing you can trust"> Session done</label>
+    </article>
+
+    <article class="session" id="s7-3">
+      <div class="session-head"><h3><span class="sn">7.3</span>Wi-Fi and MQTT</h3><span class="dur">1 h</span></div>
+      <dl>
+        <dt>Read</dt><dd>
+          <p>The <code>wifi/getting_started/station</code> example, and API Reference, System, Event Loop Library.</p>
+          <p>The <a href="https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-reference/protocols/mqtt.html" target="_blank" rel="noopener">ESP-MQTT page</a>. In v6 MQTT is a registry component, which you add with <code>idf.py add-dependency espressif/mqtt</code>.</p>
+        </dd>
+        <dt>Do</dt><dd>
+          <ul>
+            <li>Connect to Wi-Fi and set an event group bit once you have an IP address.</li>
+            <li>Print the task list before and after connecting, and note the tasks Wi-Fi adds, their priorities and their cores. Watch STEP on the analyzer while it connects.</li>
+            <li>Publish a message to the public test broker at test.mosquitto.org and read it back with MQTT Explorer or <code>mosquitto_sub</code> on your computer. Never send anything private to a public broker.</li>
+          </ul>
+        </dd>
+      </dl>
+      <label class="done-toggle"><input type="checkbox" data-session="s7-3" data-h="1" data-title="7.3 Wi-Fi and MQTT"> Session done</label>
+    </article>
+
+    <article class="session" id="s7-4">
+      <div class="session-head"><h3><span class="sn">7.4</span>Break it on purpose</h3><span class="dur">1 h</span></div>
+      <dl>
+        <dt>Read</dt><dd>API Guides: Fatal Errors; Watchdogs.</dd>
+        <dt>Do</dt><dd>
+          <p>Cause and diagnose four failures, writing down each symptom and how you recognized it:</p>
+          <ul>
+            <li>A stack overflow.</li>
+            <li>A write through a null pointer. The panic will name it StoreProhibited.</li>
+            <li>A starved idle task, caught by the task watchdog.</li>
+            <li>A deadlock. There is no panic at all, and only the task list reveals it.</li>
+          </ul>
+          <p>Let <code>idf.py monitor</code> decode each backtrace to a file and line. The classic ESP32 has no built-in USB JTAG, so stepping through code in a debugger needs an external adapter such as the ESP-Prog on GPIO12 to 15. Leave that for later.</p>
+        </dd>
+      </dl>
+      <label class="done-toggle"><input type="checkbox" data-session="s7-4" data-h="1" data-title="7.4 Break it on purpose"> Session done</label>
+    </article>
+
+    <div class="checkpoint">
+      <h4>You're ready for the capstone when you can</h4>
+      <ul>
+        <li>Follow a backtrace to the failing line.</li>
+        <li>Say which core the Wi-Fi stack uses, and place your timing-critical work accordingly.</li>
+        <li>Convert a thermistor reading to °C and say how accurate it is.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- MODULE 8 -->
+<section class="module" id="m8" data-module="8">
+  <div class="mod-side"><div class="mod-side-inner"><div class="mod-num">8</div><p class="mod-range"></p><p class="mod-prog"></p></div></div>
+  <div class="mod-main">
+    <h2>Capstone: stepper controller with homing and thermal protection</h2>
+    <p class="goal">One finished device that uses everything above, with a README that proves it meets its spec.</p>
+
+    <div class="project">
+      <h4>The spec</h4>
+      <ol>
+        <li>A GPTimer alarm callback generates STEP pulses that meet the DRV8825's timing. Moves follow a trapezoidal profile, accelerating, cruising and decelerating to a target position in steps. Step intervals are precomputed as integers, with no floating point inside the interrupt.</li>
+        <li>On boot the controller homes to the optical endstop: approach fast, back off, approach slowly. Position 0 is the beam edge, and failing to find it within a set travel is a fault.</li>
+        <li>The thermistor sits on the motor body or driver heatsink, sampled at 10 Hz with <code>xTaskDelayUntil</code> and smoothed with your <code>RingBuffer</code>. Above a warning temperature, max speed halves. Above a limit, the driver is disabled until it cools below a lower threshold.</li>
+        <li>The DRV8825 FAULT line goes through an ISR and a notification, stopping motion immediately and entering the fault state.</li>
+        <li>An explicit state machine with HOMING, IDLE, MOVING and FAULT states, plus a derated flag, logs every transition.</li>
+        <li>The pot selects a target position, read at 10 Hz. A short button press moves there, and holding for 2 seconds re-homes.</li>
+        <li>Over MQTT, publish state, position and temperature every second, and accept move and home commands that feed the same command queue as the button. Losing Wi-Fi never disturbs motion or protection.</li>
+        <li>One gatekeeper task owns logging. A health task logs every task's stack high-water mark, free heap and minimum-ever free heap every 30 seconds.</li>
+      </ol>
+      <p style="margin-top:.6rem">Rules: no busy-waiting, no unprotected shared state, exactly one owner for the position counter, no heap allocation of your own after startup, and every <code>esp_err_t</code> checked.</p>
+    </div>
+
+    <article class="session" id="s8-1">
+      <div class="session-head"><h3><span class="sn">8.1</span>Design before code</h3><span class="dur">1 h</span></div>
+      <dl>
+        <dt>Read</dt><dd>
+          <p>Microchip (formerly Atmel) application note AVR446, Linear Speed Control of Stepper Motor, which is free. Its acceleration math ports directly to a GPTimer callback. David Austin's article "Generate stepper-motor speed profiles in real time" covers the same ground.</p>
+          <p>Optional and paid: <em>Making Embedded Systems</em> by Elecia White, the chapters on creating a system architecture and managing the flow of activity.</p>
+        </dd>
+        <dt>Do</dt><dd>Draw the task diagram, with every task's priority, core affinity and stack estimate, and every queue, mutex, notification and timer between them. Draw the state machine, with what triggers each transition. Work out your top step rate and a time budget for the step callback. Commit both drawings before writing any code.</dd>
+      </dl>
+      <label class="done-toggle"><input type="checkbox" data-session="s8-1" data-h="1" data-title="8.1 Design before code"> Session done</label>
+    </article>
+
+    <article class="session" id="s8-2">
+      <div class="session-head"><h3><span class="sn">8.2</span>Motion core</h3><span class="dur">1.5 h</span></div>
+      <dl>
+        <dt>Do</dt><dd>Build spec items 1, 2, 5 and 6, with Wi-Fi not yet started. Capture a full move on the analyzer and confirm the acceleration ramp before moving on.</dd>
+      </dl>
+      <label class="done-toggle"><input type="checkbox" data-session="s8-2" data-h="1.5" data-title="8.2 Motion core"> Session done</label>
+    </article>
+
+    <article class="session" id="s8-3">
+      <div class="session-head"><h3><span class="sn">8.3</span>Protection, networking and health</h3><span class="dur">1.5 h</span></div>
+      <dl>
+        <dt>Do</dt><dd>Build spec items 3, 4, 7 and 8. Keep the Wi-Fi and MQTT code on its own side of a queue, so motion and protection never wait on the network.</dd>
+      </dl>
+      <label class="done-toggle"><input type="checkbox" data-session="s8-3" data-h="1.5" data-title="8.3 Protection, networking and health"> Session done</label>
+    </article>
+
+    <article class="session" id="s8-4">
+      <div class="session-head"><h3><span class="sn">8.4</span>Acceptance testing</h3><span class="dur">1 h</span></div>
+      <dl>
+        <dt>Do</dt><dd>
+          <p>Run each test and record the results in your README:</p>
+          <ul>
+            <li>Capture STEP and DIR through a full move while the controller publishes. Confirm the ramp shape and minimum pulse widths, with no gaps in the pulse train.</li>
+            <li>Home 10 times from different positions. After each, move to the same position and record the worst difference you see.</li>
+            <li>Warm the thermistor with your fingers or warm air until it crosses both thresholds. Confirm derating, cutoff, and recovery only below the lower threshold.</li>
+            <li>Simulate a driver fault by pulling the FAULT line low with a button. Confirm motion stops within one step period.</li>
+            <li>Kill the network for 5 minutes, for example by switching off a phone hotspot. Moves and protection carry on, and MQTT reconnects on its own.</li>
+            <li>Run back-and-forth moves for an hour, then home and compare the step count at the beam edge with the expected value to detect missed steps. Minimum free heap should level off.</li>
+          </ul>
+          <p>Finish the README with both diagrams, your measurements, and what you would change in a second version.</p>
+        </dd>
+      </dl>
+      <label class="done-toggle"><input type="checkbox" data-session="s8-4" data-h="1" data-title="8.4 Acceptance testing"> Session done</label>
+    </article>
+  </div>
+</section>
+
+</main>
+
+<section class="outro wrap">
+  <div class="outro-grid">
+    <div>
+      <h2>You're competent when you can, without looking it up</h2>
+      <ul>
+        <li>Explain task states, preemption and time slicing, and predict which task runs next.</li>
+        <li>Choose between a queue, mutex, semaphore, notification and event group for a problem, and defend the choice.</li>
+        <li>Write an interrupt handler that defers its work correctly.</li>
+        <li>Size stacks from measurements and diagnose an overflow.</li>
+        <li>Follow a panic backtrace to the failing line.</li>
+        <li>Prove a timing claim with a logic analyzer instead of log output.</li>
+        <li>Read a driver IC's datasheet and meet its timing requirements in firmware.</li>
+        <li>Turn a nonlinear analog sensor into calibrated engineering units.</li>
+        <li>Explain what the Wi-Fi stack does to your scheduling, and design around it.</li>
+      </ul>
+    </div>
+    <div>
+      <h2>After the 40 hours</h2>
+      <ul>
+        <li>Read <em>Mastering the FreeRTOS Real Time Kernel</em> cover to cover, including the chapters you skimmed.</li>
+        <li>For secure networking in depth (HTTPS, TLS and MQTT security), Shawn Hymel's paid <a href="https://learnembedded.dev/courses/iot-firmware-development-with-esp32-and-esp-idf/" target="_blank" rel="noopener">IoT Firmware Development with ESP32 and ESP-IDF</a> course picks up where this one stops.</li>
+        <li>Learn next: encoders read with the pulse counter peripheral for closed-loop position, drivers configured over UART or SPI, NVS storage for calibration values, over-the-air updates, and JTAG debugging with an ESP-Prog.</li>
+        <li>Build a second device from a spec you write yourself. Nothing else moves you forward as fast.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<script>
+(function(){
+  var KEY = 'esp32-freertos-course-v1';
+  var state = {};
+  try { state = JSON.parse(localStorage.getItem(KEY) || '{}') || {}; } catch (e) { state = {}; }
+
+  var boxes = Array.prototype.slice.call(document.querySelectorAll('input[data-session]'));
+  var sessions = boxes.map(function(b){
+    return { id: b.dataset.session, h: parseFloat(b.dataset.h), title: b.dataset.title, box: b,
+             el: document.getElementById(b.dataset.session),
+             module: b.closest('.module').dataset.module };
+  });
+  var total = sessions.reduce(function(a, s){ return a + s.h; }, 0);
+
+  function fmt(n){ return (Math.round(n * 10) / 10).toString(); }
+  function save(){ try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) {} }
+
+  // Module hour ranges and boundaries
+  var modules = [];
+  var acc = 0;
+  Array.prototype.forEach.call(document.querySelectorAll('.module'), function(m){
+    var ms = sessions.filter(function(s){ return s.module === m.dataset.module; });
+    var hours = ms.reduce(function(a, s){ return a + s.h; }, 0);
+    var start = acc; acc += hours;
+    modules.push({ el: m, num: m.dataset.module, start: start, end: acc, sessions: ms });
+    m.querySelector('.mod-range').textContent = fmt(hours) + ' h, hours ' + fmt(start) + ' to ' + fmt(acc);
+  });
+
+  // Static scope decorations
+  var marks = document.getElementById('marks');
+  var modLabels = document.getElementById('mod-labels');
+  var tickLabels = document.getElementById('tick-labels');
+  var NS = 'http://www.w3.org/2000/svg';
+  modules.forEach(function(m, i){
+    if (i > 0) {
+      var x = m.start / total * 1000;
+      var ln = document.createElementNS(NS, 'line');
+      ln.setAttribute('x1', x); ln.setAttribute('x2', x);
+      ln.setAttribute('y1', 0); ln.setAttribute('y2', 100);
+      ln.setAttribute('class', 'mark');
+      ln.setAttribute('vector-effect', 'non-scaling-stroke');
+      marks.appendChild(ln);
+    }
+    var span = document.createElement('span');
+    span.style.left = ((m.start + m.end) / 2 / total * 100) + '%';
+    var a = document.createElement('a');
+    a.href = '#m' + m.num; a.textContent = m.num;
+    a.setAttribute('aria-label', 'Module ' + m.num);
+    span.appendChild(a);
+    modLabels.appendChild(span);
+  });
+  [0, 10, 20, 30, 40].forEach(function(t){
+    var s = document.createElement('span');
+    s.style.left = (t / total * 100) + '%';
+    s.textContent = t + ' h';
+    tickLabels.appendChild(s);
+  });
+
+  function render(){
+    var done = 0, x = 0, d = '', next = null, nextX = null;
+    var HI = 14, LO = 82;
+    sessions.forEach(function(s, i){
+      var isDone = !!state[s.id];
+      s.box.checked = isDone;
+      s.el.classList.toggle('is-done', isDone);
+      var x0 = x / total * 1000; x += s.h; var x1 = x / total * 1000;
+      var y = isDone ? HI : LO;
+      d += (i === 0 ? 'M' : ' L') + x0 + ' ' + y + ' L' + x1 + ' ' + y;
+      if (isDone) done += s.h;
+      else if (!next) { next = s; nextX = x0; }
+    });
+    document.getElementById('trace').setAttribute('d', d);
+    document.getElementById('hours-done').textContent = fmt(done);
+
+    var cursor = document.getElementById('cursor');
+    var link = document.getElementById('next-link');
+    if (next) {
+      cursor.style.display = '';
+      cursor.setAttribute('x1', nextX); cursor.setAttribute('x2', nextX);
+      link.href = '#' + next.id;
+      link.textContent = 'Next: ' + next.title;
+    } else {
+      cursor.style.display = 'none';
+      link.href = '#m8';
+      link.textContent = 'All 40 hours done. Go build the second device.';
+    }
+
+    modules.forEach(function(m){
+      var n = m.sessions.filter(function(s){ return state[s.id]; }).length;
+      var p = m.el.querySelector('.mod-prog');
+      p.textContent = n === m.sessions.length ? 'Complete' : n + ' of ' + m.sessions.length + ' sessions done';
+      p.classList.toggle('complete', n === m.sessions.length);
+    });
+  }
+
+  boxes.forEach(function(b){
+    b.addEventListener('change', function(){
+      if (b.checked) state[b.dataset.session] = true; else delete state[b.dataset.session];
+      save(); render();
+    });
+  });
+
+  var reset = document.getElementById('reset');
+  var armTimer = null;
+  reset.addEventListener('click', function(){
+    if (!reset.classList.contains('armed')) {
+      reset.classList.add('armed');
+      reset.textContent = 'Click again to clear all progress';
+      armTimer = setTimeout(function(){ reset.classList.remove('armed'); reset.textContent = 'Reset progress'; }, 4000);
+      return;
+    }
+    clearTimeout(armTimer);
+    state = {}; save(); render();
+    reset.classList.remove('armed'); reset.textContent = 'Reset progress';
+  });
+
+  render();
+})();
+</script>
+</body>
+</html>
